@@ -2,7 +2,7 @@ import { initializeApp, FirebaseApp } from 'firebase/app';
 import { getAuth, Auth, GoogleAuthProvider } from 'firebase/auth';
 import { getFirestore, Firestore } from 'firebase/firestore';
 import { getStorage, FirebaseStorage } from 'firebase/storage';
-import { getFunctions, Functions } from 'firebase/functions';
+import { getFunctions, Functions, connectFunctionsEmulator } from 'firebase/functions';
 
 // IMPORTANT: Replace with your actual Firebase project configuration
 const firebaseConfig = {
@@ -25,17 +25,12 @@ let firebaseError: Error | null = null;
 export const projectId = firebaseConfig.projectId;
 
 try {
-  if (firebaseConfig.apiKey === "YOUR_API_KEY" || !firebaseConfig.apiKey || firebaseConfig.apiKey.startsWith("AIzaSyARuwcn4hMmt7MD5tTTp_r2HVqSu8Zno20".substring(0,10))) {
-    // Check for both the original placeholder and the new one to be safe
-    if(firebaseConfig.apiKey.includes("YOUR_API_KEY")) {
-       throw new Error("Firebase configuration is missing or invalid. Please update `services/firebase.ts` with your project's configuration from the Firebase console.");
-    }
-  }
   app = initializeApp(firebaseConfig);
   auth = getAuth(app);
   firestore = getFirestore(app);
   storage = getStorage(app);
-  functions = getFunctions(app);
+  // FIX: Explicitly set the functions region to match the backend deployment.
+  functions = getFunctions(app, 'us-central1');
   googleProvider = new GoogleAuthProvider();
 } catch (e: any) {
   firebaseError = e;
