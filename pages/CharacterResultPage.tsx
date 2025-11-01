@@ -6,7 +6,7 @@ import { api } from '../services/api';
 import { UserCharacter } from '../types';
 import Loader from '../components/Loader';
 // FIX: Imported Loader as LoaderIcon from lucide-react to fix 'Cannot find name 'LoaderIcon'' errors.
-import { ArrowLeft, Wand2, Loader as LoaderIcon } from 'lucide-react';
+import { ArrowLeft, Wand2, Loader as LoaderIcon, AlertTriangle } from 'lucide-react';
 
 const CharacterResultPage: React.FC = () => {
   const { characterId } = useParams<{ characterId: string }>();
@@ -16,6 +16,8 @@ const CharacterResultPage: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [generationError, setGenerationError] = useState<string | null>(null);
+
 
   useEffect(() => {
     if (!characterId) {
@@ -43,13 +45,14 @@ const CharacterResultPage: React.FC = () => {
   const handleGenerate = async () => {
     if (!prompt || !characterId) return;
     setIsGenerating(true);
+    setGenerationError(null);
     try {
       const result = await api.generateCharacterVisualization({ characterId, prompt });
       setGeneratedImages(prev => [`data:image/png;base64,${result.base64Image}`, ...prev]);
       setPrompt('');
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      alert("Failed to generate image. Please try again.");
+      setGenerationError(err.message || "An unknown error occurred. Please try again.");
     } finally {
       setIsGenerating(false);
     }
@@ -103,6 +106,17 @@ const CharacterResultPage: React.FC = () => {
                 </>
               )}
             </button>
+            {generationError && (
+              <div className="mt-4 p-3 bg-red-900/20 border border-red-500/30 rounded-lg text-left">
+                <div className="flex items-start">
+                  <AlertTriangle className="h-5 w-5 text-red-400 mr-3 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <h3 className="font-bold text-red-300">Generation Failed</h3>
+                    <p className="text-red-400 text-sm mt-1">{generationError}</p>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
           
           <div className="mt-8">

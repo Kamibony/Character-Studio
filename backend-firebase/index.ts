@@ -1,5 +1,6 @@
 import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
+import { getStorage } from "firebase-admin/storage";
 import { VertexAI } from "@google-cloud/vertexai";
 
 // Define types locally to avoid import issues from frontend
@@ -17,6 +18,16 @@ interface UserCharacter {
   adapterId: string | null;
 }
 
+// Helper function to determine MIME type from a file path
+function getMimeType(filePath: string): string {
+  const lowerPath = filePath.toLowerCase();
+  if (lowerPath.endsWith(".png")) return "image/png";
+  if (lowerPath.endsWith(".jpeg") || lowerPath.endsWith(".jpg")) return "image/jpeg";
+  if (lowerPath.endsWith(".webp")) return "image/webp";
+  // Default fallback, although frontend should prevent other types.
+  return "image/jpeg";
+}
+
 // Initialize Firebase Admin
 admin.initializeApp();
 const db = admin.firestore();
@@ -30,74 +41,76 @@ const regionalFunctions = functions.region("us-central1");
 // --- Function 1: Get Character Library ---
 export const getCharacterLibrary = regionalFunctions.https.onCall(
   async (data, context): Promise<UserCharacter[]> => {
-    if (!context.auth) {
-      throw new functions.https.HttpsError(
-        "unauthenticated",
-        "You must be logged in."
-      );
+    try {
+      if (!context.auth) {
+        throw new functions.https.HttpsError(
+          "unauthenticated",
+          "You must be logged in."
+        );
+      }
+      const uid = context.auth.uid;
+
+      const snapshot = await db
+        .collection("user_characters")
+        .where("userId", "==", uid)
+        .get();
+
+      return snapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      } as UserCharacter));
+    } catch (error) {
+        console.error("Error in getCharacterLibrary:", error);
+        if (error instanceof functions.https.HttpsError) throw error;
+        throw new functions.https.HttpsError("internal", "Failed to load character library.");
     }
-    const uid = context.auth.uid;
-
-    const snapshot = await db
-      .collection("user_characters")
-      .where("userId", "==", uid)
-      .get();
-
-    return snapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    } as UserCharacter));
   }
 );
 
 // --- Function 2: Start "Training" (Simulation) ---
 export const startCharacterTuning = regionalFunctions.https.onCall(
   async (data, context) => {
-    if (!context.auth) {
-      throw new functions.https.HttpsError("unauthenticated", "You must be logged in.");
+    try {
+      if (!context.auth) {
+        throw new functions.https.HttpsError("unauthenticated", "You must be logged in.");
+      }
+
+      const { files } = data; // settings are unused in simulation
+      const uid = context.auth.uid;
+
+      const newCharRef = db.collection("user_characters").doc();
+      const characterId = newCharRef.id;
+
+      await newCharRef.set({
+        userId: uid,
+        status: "pending" as CharacterStatus,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        adapterId: null,
+        characterName: "Processing...",
+        description: "",
+        keywords: [],
+        imagePreviewUrl: files[0] || null, 
+      });
+      
+      simulateTraining(characterId);
+
+      return { characterId };
+    } catch (error) {
+        console.error("Error in startCharacterTuning:", error);
+        if (error instanceof functions.https.HttpsError) throw error;
+        throw new functions.https.HttpsError("internal", "Failed to start character training.");
     }
-
-    const { files } = data; // settings are unused in simulation
-    const uid = context.auth.uid;
-
-    // Step 1: Create a record in the database with "pending" status
-    const newCharRef = db.collection("user_characters").doc();
-    const characterId = newCharRef.id;
-
-    await newCharRef.set({
-      userId: uid,
-      status: "pending" as CharacterStatus,
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      adapterId: null,
-      characterName: "Processing...",
-      description: "",
-      keywords: [],
-      imagePreviewUrl: files[0] || null, 
-    });
-    
-    // Step 2: Trigger the background "training" process without waiting for it to complete.
-    // This allows the UI to immediately move to the progress page.
-    simulateTraining(characterId);
-
-    // Step 3: Return the character ID to the client.
-    return { characterId };
   }
 );
 
-// Helper function to simulate the training process
 async function simulateTraining(characterId: string) {
   const charRef = db.collection("user_characters").doc(characterId);
   try {
-    // FIX: Lazy initialize VertexAI client inside the function
     const vertexAI = new VertexAI({ project: PROJECT_ID, location: LOCATION });
     
-    // Step 3a: Change status to "training"
     await charRef.update({ status: "training" });
-    
-    // Simulate training time
-    await new Promise(resolve => setTimeout(resolve, 5000)); // 5 seconds
+    await new Promise(resolve => setTimeout(resolve, 5000));
 
-    // Step 3c: Call AI to generate description and name
     const generativeModel = vertexAI.getGenerativeModel({ model: "gemini-2.5-flash" });
     
     const prompt = `
@@ -105,7 +118,6 @@ async function simulateTraining(characterId: string) {
       1. 'characterName': A cool, creative name.
       2. 'description': A brief, descriptive paragraph.
       3. 'keywords': An array of 5 relevant string keywords.
-      
       Respond only with the valid JSON object.
     `;
     
@@ -113,7 +125,13 @@ async function simulateTraining(characterId: string) {
     
     const result = await generativeModel.generateContent({ contents: [{ role: 'user', parts }] });
     const response = result.response;
-    const responseText = response.candidates?.[0]?.content?.parts?.[0]?.text;
+    const candidate = response.candidates?.[0];
+    
+    if (candidate?.finishReason && ['SAFETY', 'RECITATION'].includes(candidate.finishReason)) {
+        console.warn(`Character analysis stopped due to ${candidate.finishReason}. Using fallback data.`);
+    }
+    
+    const responseText = candidate?.content?.parts?.[0]?.text;
     
     let aiData = {
         characterName: "Mysterious Hero",
@@ -132,67 +150,99 @@ async function simulateTraining(characterId: string) {
       }
     }
 
-    // Step 3d: Update the document to "ready" status
     await charRef.update({
       status: "ready",
       characterName: aiData.characterName,
       description: aiData.description,
       keywords: aiData.keywords,
-      adapterId: `simulated-adapter-${Date.now()}` // Add a fake adapter ID
+      adapterId: `simulated-adapter-${Date.now()}`
     });
 
   } catch (error) {
     console.error("Simulation Training failed:", error);
-    await charRef.update({
-      status: "error",
-    });
+    await charRef.update({ status: "error" });
   }
 }
 
 // --- Function 3: Generate Image ---
-export const generateCharacterVisualization = regionalFunctions.runWith({timeoutSeconds: 120}).https.onCall(
+export const generateCharacterVisualization = regionalFunctions.runWith({timeoutSeconds: 120, memory: '1GB'}).https.onCall(
   async (data, context): Promise<{ base64Image: string }> => {
-    if (!context.auth) {
-      throw new functions.https.HttpsError("unauthenticated", "You must be logged in.");
+    try {
+      if (!context.auth) {
+        throw new functions.https.HttpsError("unauthenticated", "You must be logged in.");
+      }
+      
+      const { characterId, prompt } = data;
+      
+      const charDoc = await db.collection("user_characters").doc(characterId).get();
+      if (!charDoc.exists) {
+          throw new functions.https.HttpsError("not-found", "Character not found.");
+      }
+      const character = charDoc.data() as UserCharacter;
+
+      if (!character.imagePreviewUrl) {
+          throw new functions.https.HttpsError("failed-precondition", "Character has no preview image for reference.");
+      }
+
+      // Download reference image from GCS
+      const bucket = getStorage().bucket(admin.app().options.storageBucket);
+      const file = bucket.file(character.imagePreviewUrl);
+      const [imageBuffer] = await file.download();
+      const imageBase64FromStorage = imageBuffer.toString("base64");
+      
+      const vertexAI = new VertexAI({ project: PROJECT_ID, location: LOCATION });
+      const generativeModel = vertexAI.getGenerativeModel({ model: "gemini-2.5-flash-image" });
+
+      const generationPrompt = `Using the provided image as a reference for the character's appearance, place this character in the following scene: "${prompt}".`;
+      
+      const imagePart = {
+          inlineData: {
+              mimeType: getMimeType(character.imagePreviewUrl),
+              data: imageBase64FromStorage,
+          },
+      };
+      const textPart = { text: generationPrompt };
+
+      const result = await generativeModel.generateContent({
+          contents: [{ role: 'user', parts: [textPart, imagePart] }],
+          // FIX: Explicitly tell the model to generate an image as output.
+          // This was the missing piece causing the model to return an empty response.
+          config: {
+            responseModalities: ['IMAGE']
+          }
+      });
+      
+      const candidate = result.response.candidates?.[0];
+
+      if (!candidate) {
+          throw new functions.https.HttpsError("internal", "The AI model returned an empty response. Please try again.");
+      }
+
+      if (candidate.finishReason && ['SAFETY', 'RECITATION'].includes(candidate.finishReason)) {
+          throw new functions.https.HttpsError(
+              "invalid-argument",
+              `Your prompt was blocked for safety reasons (${candidate.finishReason}). Please modify your prompt and try again.`
+          );
+      }
+
+      const imagePartFromAI = candidate.content?.parts?.find(part => part.inlineData);
+      const imageBase64 = imagePartFromAI?.inlineData?.data;
+
+      if (!imageBase64) {
+        throw new functions.https.HttpsError("internal", "The AI failed to generate an image. Please try rephrasing your prompt.");
+      }
+      
+      return { base64Image: imageBase64 };
+    } catch (error: any) {
+        console.error("Critical error in generateCharacterVisualization:", {
+            message: error.message,
+            stack: error.stack,
+            details: error.details
+        });
+        if (error instanceof functions.https.HttpsError) {
+            throw error;
+        }
+        throw new functions.https.HttpsError("internal", "An unexpected server error occurred during image generation.");
     }
-    
-    const { characterId, prompt } = data;
-    
-    const charDoc = await db.collection("user_characters").doc(characterId).get();
-    if (!charDoc.exists) {
-        throw new functions.https.HttpsError("not-found", "Character not found.");
-    }
-    const character = charDoc.data() as UserCharacter;
-    
-    // FIX: Lazy initialize VertexAI client inside the function
-    const vertexAI = new VertexAI({ project: PROJECT_ID, location: LOCATION });
-    
-    // As per the prompt, we simulate image-to-image by using the character description
-    // in the prompt, since we are not downloading the image from Storage for simplicity.
-    const generativeModel = vertexAI.getGenerativeModel({ model: "gemini-2.5-flash-image" });
-
-    const generationPrompt = `
-      A character described as: ${character.characterName}, ${character.description}.
-      Place this character in the following scene: "${prompt}".
-      Maintain the character's appearance based on the description.
-    `;
-    
-    const parts = [{ text: generationPrompt }];
-
-    const result = await generativeModel.generateContent({
-        contents: [{ role: 'user', parts }],
-        // The Node SDK does not use responseModalities. It infers from the model.
-        // We expect the model 'gemini-2.5-flash-image' to return an image part.
-    });
-
-    const imagePart = result.response.candidates?.[0]?.content?.parts?.find(part => part.inlineData);
-    const imageBase64 = imagePart?.inlineData?.data;
-
-    if (!imageBase64) {
-      console.error("AI response did not contain an image:", JSON.stringify(result.response, null, 2));
-      throw new functions.https.HttpsError("internal", "The AI model failed to generate an image.");
-    }
-    
-    return { base64Image: imageBase64 };
   }
 );
