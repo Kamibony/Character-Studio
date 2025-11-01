@@ -17,7 +17,16 @@ const CharacterSelectionPage: React.FC = () => {
       try {
         setLoading(true);
         const fetchedCharacters = await api.getCharacterLibrary();
-        setCharacters(fetchedCharacters);
+
+        // Pridané triedenie:
+        const sortedCharacters = fetchedCharacters.sort((a, b) => {
+          // Skontrolujeme, či createdAt existuje, aby sme predišli chybám
+          const timeA = a.createdAt?.toMillis ? a.createdAt.toMillis() : 0;
+          const timeB = b.createdAt?.toMillis ? b.createdAt.toMillis() : 0;
+          return timeB - timeA; // Najnovšie ako prvé
+        });
+
+        setCharacters(sortedCharacters);
       } catch (err) {
         setError('Failed to load your character library. Please try again later.');
         console.error(err);

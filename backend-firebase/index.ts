@@ -40,7 +40,6 @@ export const getCharacterLibrary = functions.https.onCall(
     const snapshot = await db
       .collection("user_characters")
       .where("userId", "==", uid)
-      .orderBy("createdAt", "desc")
       .get();
 
     return snapshot.docs.map((doc) => ({
