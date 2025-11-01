@@ -1,0 +1,5 @@
+{
+  "name": "Character Studio",
+  "description": "An application that allows users to train personalized AI models for characters from their photos and generate new images in various scenes.",
+  "requestFramePermissions": []
+}
