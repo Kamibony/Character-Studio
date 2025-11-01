@@ -15,7 +15,10 @@
     "react": "^19.2.0",
     "react-router-dom": "^7.9.5",
     "uuid": "^13.0.0",
-    "react-dropzone": "^14.3.8"
+    "react-dropzone": "^14.3.8",
+    "firebase-functions": "^6.6.0",
+    "firebase-admin": "^13.5.0",
+    "@google-cloud/vertexai": "^1.10.0"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
