@@ -2,10 +2,10 @@
 import React, { useState } from 'react';
 import { signInWithPopup } from 'firebase/auth';
 import { auth, googleProvider } from '../services/firebase';
-import { Zap } from 'lucide-react';
+import { Zap, AlertTriangle } from 'lucide-react';
 
 const LoginPage: React.FC = () => {
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{title: string, message: string} | null>(null);
   const [isSigningIn, setIsSigningIn] = useState(false);
 
   const handleGoogleSignIn = async () => {
@@ -15,10 +15,21 @@ const LoginPage: React.FC = () => {
       await signInWithPopup(auth!, googleProvider!);
       // The auth state listener in useAuth will handle the redirect.
     } catch (err: any) {
-      if (err.code === 'auth/api-key-not-valid') {
-        setError('Firebase configuration error. Please check your API key.');
+      if (err.code === 'auth/unauthorized-domain') {
+        setError({
+            title: 'Domain Not Authorized',
+            message: `This application's domain (${window.location.hostname}) needs to be authorized for sign-in within your Firebase project.`
+        });
+      } else if (err.code === 'auth/api-key-not-valid') {
+        setError({
+            title: 'Invalid Firebase API Key',
+            message: 'The Firebase configuration is incorrect. Please verify the API key in `services/firebase.ts`.'
+        });
       } else {
-        setError('Failed to sign in. Please try again.');
+        setError({
+            title: 'Sign-In Failed',
+            message: 'An unexpected error occurred during sign-in. Please try again.'
+        });
       }
       console.error(err);
       setIsSigningIn(false);
@@ -52,7 +63,28 @@ const LoginPage: React.FC = () => {
           )}
           {isSigningIn ? 'Signing In...' : 'Sign in with Google'}
         </button>
-        {error && <p className="mt-4 text-red-500">{error}</p>}
+        {error && (
+            <div className="mt-4 p-4 bg-red-900/20 border border-red-500/30 rounded-lg text-left">
+              <div className="flex items-start">
+                  <AlertTriangle className="h-5 w-5 text-red-400 mr-3 flex-shrink-0 mt-0.5" />
+                  <div>
+                      <h3 className="font-bold text-red-300">{error.title}</h3>
+                      <p className="text-red-400 text-sm mt-1">{error.message}</p>
+                      {error.title === 'Domain Not Authorized' && (
+                          <div className="mt-3 text-xs text-gray-300 bg-background/50 p-3 rounded-md border border-gray-600">
+                              <p className="font-semibold text-gray-200">How to fix this configuration issue:</p>
+                              <ol className="list-decimal list-inside pl-1 mt-1 space-y-1">
+                                  <li>Go to your project in the Firebase Console.</li>
+                                  <li>Navigate to <strong>Authentication</strong> &gt; <strong>Settings</strong> tab.</li>
+                                  <li>Under <strong>Authorized domains</strong>, click <strong>Add domain</strong>.</li>
+                                  <li>Enter the following domain: <code className="bg-gray-700 px-1.5 py-1 rounded text-white font-mono">{window.location.hostname}</code></li>
+                              </ol>
+                          </div>
+                      )}
+                  </div>
+              </div>
+            </div>
+        )}
       </div>
     </div>
   );
