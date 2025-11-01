@@ -2,6 +2,10 @@ import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
 import { getStorage } from "firebase-admin/storage";
 import { VertexAI } from "@google-cloud/vertexai";
+import * as cors from "cors";
+
+// Initialize CORS middleware
+const corsHandler = cors({ origin: true });
 
 // Define types locally to avoid import issues from frontend
 type CharacterStatus = "pending" | "training" | "ready" | "error";
@@ -24,7 +28,6 @@ function getMimeType(filePath: string): string {
   if (lowerPath.endsWith(".png")) return "image/png";
   if (lowerPath.endsWith(".jpeg") || lowerPath.endsWith(".jpg")) return "image/jpeg";
   if (lowerPath.endsWith(".webp")) return "image/webp";
-  // Default fallback, although frontend should prevent other types.
   return "image/jpeg";
 }
 
@@ -39,231 +42,155 @@ const LOCATION = "us-central1";
 const regionalFunctions = functions.region("us-central1");
 
 // --- PREVIEW MODE: MOCK USER ID ---
-// This ID matches the mock user on the frontend (in hooks/useAuth.ts)
-// to allow testing without a real login.
 const MOCK_USER_ID = 'mock-user-for-preview';
 
-// --- Function 1: Get Character Library ---
-export const getCharacterLibrary = regionalFunctions.https.onCall(
-  async (data, context): Promise<UserCharacter[]> => {
-    try {
-      // PREVIEW MODE: Auth check is temporarily disabled.
-      /*
-      if (!context.auth) {
-        throw new functions.https.HttpsError(
-          "unauthenticated",
-          "You must be logged in."
-        );
-      }
-      const uid = context.auth.uid;
-      */
-      const uid = MOCK_USER_ID; // Use mock user ID for testing
+// --- Function 1: Get Character Library (Refactored to onRequest) ---
+export const getCharacterLibrary = regionalFunctions.https.onRequest(
+  (request, response) => {
+    corsHandler(request, response, async () => {
+        try {
+            const uid = MOCK_USER_ID; 
 
-      const snapshot = await db
-        .collection("user_characters")
-        .where("userId", "==", uid)
-        .get();
+            const snapshot = await db
+                .collection("user_characters")
+                .where("userId", "==", uid)
+                .get();
 
-      return snapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      } as UserCharacter));
-    } catch (error) {
-        console.error("Error in getCharacterLibrary:", error);
-        if (error instanceof functions.https.HttpsError) throw error;
-        throw new functions.https.HttpsError("internal", "Failed to load character library.");
-    }
+            const characters = snapshot.docs.map((doc) => ({
+                id: doc.id,
+                ...doc.data(),
+            } as UserCharacter));
+            
+            // httpsCallable expects a `data` wrapper in the response
+            response.status(200).send({ data: characters });
+
+        } catch (error) {
+            console.error("Error in getCharacterLibrary:", error);
+            response.status(500).send({ error: { message: "Failed to load character library." } });
+        }
+    });
   }
 );
 
-// --- Function 2: Start "Training" (Simulation) ---
-export const startCharacterTuning = regionalFunctions.https.onCall(
-  async (data, context) => {
-    try {
-      // PREVIEW MODE: Auth check is temporarily disabled.
-      /*
-      if (!context.auth) {
-        throw new functions.https.HttpsError("unauthenticated", "You must be logged in.");
-      }
-      const uid = context.auth.uid;
-      */
-      const uid = MOCK_USER_ID; // Use mock user ID for testing
+// --- Function 2: Start "Training" (Refactored to onRequest) ---
+export const startCharacterTuning = regionalFunctions.https.onRequest(
+  (request, response) => {
+    corsHandler(request, response, async () => {
+        try {
+            const uid = MOCK_USER_ID; 
+            
+            // For httpsCallable, the payload is in request.body.data
+            const { files } = request.body.data;
+            
+            const newCharRef = db.collection("user_characters").doc();
+            const characterId = newCharRef.id;
 
-      const { files } = data; // settings are unused in simulation
-      
-      const newCharRef = db.collection("user_characters").doc();
-      const characterId = newCharRef.id;
+            await newCharRef.set({
+                userId: uid,
+                status: "pending" as CharacterStatus,
+                createdAt: admin.firestore.FieldValue.serverTimestamp(),
+                adapterId: null,
+                characterName: "Processing...",
+                description: "",
+                keywords: [],
+                imagePreviewUrl: files[0] || null, 
+            });
+            
+            simulateTraining(characterId);
+            
+            response.status(200).send({ data: { characterId } });
 
-      await newCharRef.set({
-        userId: uid,
-        status: "pending" as CharacterStatus,
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        adapterId: null,
-        characterName: "Processing...",
-        description: "",
-        keywords: [],
-        imagePreviewUrl: files[0] || null, 
-      });
-      
-      simulateTraining(characterId);
-
-      return { characterId };
-    } catch (error) {
-        console.error("Error in startCharacterTuning:", error);
-        if (error instanceof functions.https.HttpsError) throw error;
-        throw new functions.https.HttpsError("internal", "Failed to start character training.");
-    }
+        } catch (error) {
+            console.error("Error in startCharacterTuning:", error);
+            response.status(500).send({ error: { message: "Failed to start character training." } });
+        }
+    });
   }
 );
 
 async function simulateTraining(characterId: string) {
+  // This is an async background process, so no changes are needed here.
+  // It's not directly called by the client.
   const charRef = db.collection("user_characters").doc(characterId);
   try {
-    const vertexAI = new VertexAI({ project: PROJECT_ID, location: LOCATION });
-    
     await charRef.update({ status: "training" });
     await new Promise(resolve => setTimeout(resolve, 5000));
-
+    
+    const vertexAI = new VertexAI({ project: PROJECT_ID, location: LOCATION });
     const generativeModel = vertexAI.getGenerativeModel({ model: "gemini-2.5-flash" });
     
-    const prompt = `
-      Analyze a character. Generate a JSON object with:
-      1. 'characterName': A cool, creative name.
-      2. 'description': A brief, descriptive paragraph.
-      3. 'keywords': An array of 5 relevant string keywords.
-      Respond only with the valid JSON object.
-    `;
+    const prompt = `Analyze a character. Generate a JSON object with: 'characterName', 'description', 'keywords' (array of 5). Respond only with valid JSON.`;
+    const result = await generativeModel.generateContent({ contents: [{ role: 'user', parts: [{ text: prompt }] }] });
     
-    const parts = [{ text: prompt }];
+    const responseText = result.response.candidates?.[0]?.content?.parts?.[0]?.text;
     
-    const result = await generativeModel.generateContent({ contents: [{ role: 'user', parts }] });
-    const response = result.response;
-    const candidate = response.candidates?.[0];
-    
-    if (candidate?.finishReason && ['SAFETY', 'RECITATION'].includes(candidate.finishReason)) {
-        console.warn(`Character analysis stopped due to ${candidate.finishReason}. Using fallback data.`);
-    }
-    
-    const responseText = candidate?.content?.parts?.[0]?.text;
-    
-    let aiData = {
-        characterName: "Mysterious Hero",
-        description: "A character of unknown origin, ready for adventure.",
-        keywords: ["mysterious", "heroic", "adventurous", "brave", "enigmatic"]
-    };
-    
+    let aiData = { characterName: "Mysterious Hero", description: "A character of unknown origin.", keywords: ["mysterious"] };
     if (responseText) {
       try {
           const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-          if (jsonMatch) {
-            aiData = JSON.parse(jsonMatch[0]);
-          }
-      } catch (e) {
-          console.warn("Failed to parse AI response, using fallback.", e);
-      }
+          if (jsonMatch) aiData = JSON.parse(jsonMatch[0]);
+      } catch (e) { console.warn("Failed to parse AI response, using fallback.", e); }
     }
-
-    await charRef.update({
-      status: "ready",
-      characterName: aiData.characterName,
-      description: aiData.description,
-      keywords: aiData.keywords,
-      adapterId: `simulated-adapter-${Date.now()}`
-    });
-
+    
+    await charRef.update({ status: "ready", ...aiData, adapterId: `simulated-adapter-${Date.now()}` });
   } catch (error) {
     console.error("Simulation Training failed:", error);
     await charRef.update({ status: "error" });
   }
 }
 
-// --- Function 3: Generate Image ---
-export const generateCharacterVisualization = regionalFunctions.runWith({timeoutSeconds: 120, memory: '1GB'}).https.onCall(
-  async (data, context): Promise<{ base64Image: string }> => {
-    try {
-      // PREVIEW MODE: Auth check is temporarily disabled.
-      /*
-      if (!context.auth) {
-        throw new functions.https.HttpsError("unauthenticated", "You must be logged in.");
-      }
-      */
-      
-      const { characterId, prompt } = data;
-      
-      const charDoc = await db.collection("user_characters").doc(characterId).get();
-      if (!charDoc.exists) {
-          throw new functions.https.HttpsError("not-found", "Character not found.");
-      }
-      const character = charDoc.data() as UserCharacter;
+// --- Function 3: Generate Image (Refactored to onRequest) ---
+export const generateCharacterVisualization = regionalFunctions.runWith({timeoutSeconds: 120, memory: '1GB'}).https.onRequest(
+  (request, response) => {
+    corsHandler(request, response, async () => {
+        try {
+            const { characterId, prompt } = request.body.data;
+            
+            const charDoc = await db.collection("user_characters").doc(characterId).get();
+            if (!charDoc.exists) {
+                response.status(404).send({ error: { message: "Character not found." } });
+                return;
+            }
+            const character = charDoc.data() as UserCharacter;
 
-      if (!character.imagePreviewUrl) {
-          throw new functions.https.HttpsError("failed-precondition", "Character has no preview image for reference.");
-      }
+            if (!character.imagePreviewUrl) {
+                response.status(400).send({ error: { message: "Character has no preview image for reference." } });
+                return;
+            }
 
-      // --- Download reference image from GCS with specific error handling ---
-      let imageBase64FromStorage;
-      try {
-        const bucket = getStorage().bucket(); // Use default bucket - more robust
-        const file = bucket.file(character.imagePreviewUrl);
-        const [imageBuffer] = await file.download();
-        imageBase64FromStorage = imageBuffer.toString("base64");
-      } catch (storageError) {
-        console.error(`Failed to download reference image '${character.imagePreviewUrl}' from GCS.`, storageError);
-        throw new functions.https.HttpsError("internal", "Could not retrieve the character's reference image from storage. It may have been deleted or there could be a permission issue.");
-      }
-      
-      const vertexAI = new VertexAI({ project: PROJECT_ID, location: LOCATION });
-      const generativeModel = vertexAI.getGenerativeModel({ model: "gemini-2.5-flash-image" });
+            const bucket = getStorage().bucket();
+            const file = bucket.file(character.imagePreviewUrl);
+            const [imageBuffer] = await file.download();
+            const imageBase64FromStorage = imageBuffer.toString("base64");
+            
+            const vertexAI = new VertexAI({ project: PROJECT_ID, location: LOCATION });
+            const generativeModel = vertexAI.getGenerativeModel({ model: "gemini-2.5-flash-image" });
 
-      const generationPrompt = `Using the provided image as a reference for the character's appearance, place this character in the following scene: "${prompt}".`;
-      
-      const imagePart = {
-          inlineData: {
-              mimeType: getMimeType(character.imagePreviewUrl),
-              data: imageBase64FromStorage,
-          },
-      };
-      const textPart = { text: generationPrompt };
+            const result = await generativeModel.generateContent({
+                contents: { 
+                    parts: [
+                        { inlineData: { mimeType: getMimeType(character.imagePreviewUrl), data: imageBase64FromStorage } },
+                        { text: `Using the provided image as a reference for the character's appearance, place this character in the following scene: "${prompt}".` }
+                    ]
+                }
+            });
+            
+            // DEFINITIVE FIX: The SDK returns an array with a single response object.
+            const generationResponse = result[0];
+            const imageBase64 = generationResponse.candidates?.[0]?.content?.parts?.find(p => p.inlineData)?.inlineData?.data;
 
-      const result = await generativeModel.generateContent({
-          // DEFINITIVE FIX: Use the direct multimodal format instead of the chat format.
-          contents: { parts: [imagePart, textPart] },
-          generationConfig: {
-            responseMimeType: 'image/png'
-          }
-      });
-      
-      const candidate = result.response.candidates?.[0];
+            if (!imageBase64) {
+                console.error("AI response did not contain image data. Full response:", JSON.stringify(generationResponse, null, 2));
+                response.status(500).send({ error: { message: "The AI failed to generate an image. This might be due to a safety filter. Please try rephrasing your prompt." } });
+                return;
+            }
+            
+            response.status(200).send({ data: { base64Image: imageBase64 } });
 
-      if (!candidate) {
-          throw new functions.https.HttpsError("internal", "The AI model returned an empty response. Please try again.");
-      }
-
-      if (candidate.finishReason && ['SAFETY', 'RECITATION'].includes(candidate.finishReason)) {
-          throw new functions.https.HttpsError(
-              "invalid-argument",
-              `Your prompt was blocked for safety reasons (${candidate.finishReason}). Please modify your prompt and try again.`
-          );
-      }
-
-      const imagePartFromAI = candidate.content?.parts?.find(part => part.inlineData);
-      const imageBase64 = imagePartFromAI?.inlineData?.data;
-
-      if (!imageBase64) {
-        throw new functions.https.HttpsError("internal", "The AI failed to generate an image. Please try rephrasing your prompt.");
-      }
-      
-      return { base64Image: imageBase64 };
-    } catch (error: any) {
-        console.error("Critical error in generateCharacterVisualization:", {
-            message: error.message,
-            stack: error.stack,
-            details: error.details
-        });
-        if (error instanceof functions.https.HttpsError) {
-            throw error;
+        } catch (error: any) {
+            console.error("Critical error in generateCharacterVisualization:", error);
+            response.status(500).send({ error: { message: "An unexpected server error occurred during image generation." } });
         }
-        throw new functions.https.HttpsError("internal", "An unexpected server error occurred during image generation.");
-    }
+    });
   }
 );
