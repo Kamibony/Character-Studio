@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { signInWithPopup } from 'firebase/auth';
 import { auth, googleProvider, projectId } from '../services/firebase';
-import { Zap, AlertTriangle, ExternalLink } from 'lucide-react';
+import { Zap, AlertTriangle, ExternalLink, RotateCw } from 'lucide-react';
 
 const LoginPage: React.FC = () => {
   const [error, setError] = useState<{title: string, message: string} | null>(null);
@@ -33,6 +33,10 @@ const LoginPage: React.FC = () => {
   const handleRetrySignIn = () => {
     setError(null);
     handleGoogleSignIn();
+  };
+  
+  const handleReload = () => {
+    window.location.reload();
   };
 
   const handleCopyToClipboard = (text: string) => {
@@ -84,16 +88,24 @@ const LoginPage: React.FC = () => {
                     </div>
                 </div>
                  <div className="pt-3 border-t border-gray-600/50">
-                    <p className="font-semibold text-gray-200 text-xs">After adding the domain, it may take a minute to apply. If it still fails, try a hard refresh (Cmd+Shift+R or Ctrl+Shift+R).</p>
+                    <p className="font-semibold text-gray-200 text-xs">After adding the domain, it may take a minute to apply. If it still fails, try reloading the page.</p>
                 </div>
             </div>
-            <button
-                onClick={handleRetrySignIn}
-                disabled={isSigningIn}
-                className="w-full mt-8 bg-primary hover:bg-primary/90 text-white font-bold py-3 px-4 rounded-lg transition-transform transform hover:scale-105 flex items-center justify-center disabled:bg-gray-500 disabled:cursor-not-allowed"
+            <div className="flex gap-4 mt-8">
+                <button
+                    onClick={handleReload}
+                    className="w-full bg-gray-600 hover:bg-gray-500 text-white font-bold py-3 px-4 rounded-lg transition-colors flex items-center justify-center gap-2"
                 >
-                {isSigningIn ? 'Retrying...' : "I've added the domain, Retry Sign-In"}
-            </button>
+                    <RotateCw size={16} /> Reload Page
+                </button>
+                <button
+                    onClick={handleRetrySignIn}
+                    disabled={isSigningIn}
+                    className="w-full bg-primary hover:bg-primary/90 text-white font-bold py-3 px-4 rounded-lg transition-transform transform hover:scale-105 flex items-center justify-center disabled:bg-gray-500 disabled:cursor-not-allowed"
+                    >
+                    {isSigningIn ? 'Retrying...' : "Retry Sign-In"}
+                </button>
+            </div>
           </div>
         ) : (
           <>
@@ -121,7 +133,7 @@ const LoginPage: React.FC = () => {
               )}
               {isSigningIn ? 'Signing In...' : 'Sign in with Google'}
             </button>
-            {error && (
+            {error && !isConfigError && (
                 <div className="mt-4 p-3 bg-red-900/20 border border-red-500/30 rounded-lg text-left">
                   <div className="flex items-start">
                       <AlertTriangle className="h-5 w-5 text-red-400 mr-3 flex-shrink-0 mt-0.5" />

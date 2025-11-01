@@ -26,8 +26,10 @@ const PROJECT_ID = "character-studio-comics";
 const LOCATION = "us-central1";
 const vertexAI = new VertexAI({ project: PROJECT_ID, location: LOCATION });
 
+const regionalFunctions = functions.region("us-central1");
+
 // --- Function 1: Get Character Library ---
-export const getCharacterLibrary = functions.https.onCall(
+export const getCharacterLibrary = regionalFunctions.https.onCall(
   async (data, context): Promise<UserCharacter[]> => {
     if (!context.auth) {
       throw new functions.https.HttpsError(
@@ -50,7 +52,7 @@ export const getCharacterLibrary = functions.https.onCall(
 );
 
 // --- Function 2: Start "Training" (Simulation) ---
-export const startCharacterTuning = functions.https.onCall(
+export const startCharacterTuning = regionalFunctions.https.onCall(
   async (data, context) => {
     if (!context.auth) {
       throw new functions.https.HttpsError("unauthenticated", "You must be logged in.");
@@ -146,7 +148,7 @@ async function simulateTraining(characterId: string) {
 }
 
 // --- Function 3: Generate Image ---
-export const generateCharacterVisualization = functions.runWith({timeoutSeconds: 120}).https.onCall(
+export const generateCharacterVisualization = regionalFunctions.runWith({timeoutSeconds: 120}).https.onCall(
   async (data, context): Promise<{ base64Image: string }> => {
     if (!context.auth) {
       throw new functions.https.HttpsError("unauthenticated", "You must be logged in.");
