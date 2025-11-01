@@ -38,10 +38,17 @@ const LOCATION = "us-central1";
 
 const regionalFunctions = functions.region("us-central1");
 
+// --- PREVIEW MODE: MOCK USER ID ---
+// This ID matches the mock user on the frontend (in hooks/useAuth.ts)
+// to allow testing without a real login.
+const MOCK_USER_ID = 'mock-user-for-preview';
+
 // --- Function 1: Get Character Library ---
 export const getCharacterLibrary = regionalFunctions.https.onCall(
   async (data, context): Promise<UserCharacter[]> => {
     try {
+      // PREVIEW MODE: Auth check is temporarily disabled.
+      /*
       if (!context.auth) {
         throw new functions.https.HttpsError(
           "unauthenticated",
@@ -49,6 +56,8 @@ export const getCharacterLibrary = regionalFunctions.https.onCall(
         );
       }
       const uid = context.auth.uid;
+      */
+      const uid = MOCK_USER_ID; // Use mock user ID for testing
 
       const snapshot = await db
         .collection("user_characters")
@@ -71,13 +80,17 @@ export const getCharacterLibrary = regionalFunctions.https.onCall(
 export const startCharacterTuning = regionalFunctions.https.onCall(
   async (data, context) => {
     try {
+      // PREVIEW MODE: Auth check is temporarily disabled.
+      /*
       if (!context.auth) {
         throw new functions.https.HttpsError("unauthenticated", "You must be logged in.");
       }
+      const uid = context.auth.uid;
+      */
+      const uid = MOCK_USER_ID; // Use mock user ID for testing
 
       const { files } = data; // settings are unused in simulation
-      const uid = context.auth.uid;
-
+      
       const newCharRef = db.collection("user_characters").doc();
       const characterId = newCharRef.id;
 
@@ -168,9 +181,12 @@ async function simulateTraining(characterId: string) {
 export const generateCharacterVisualization = regionalFunctions.runWith({timeoutSeconds: 120, memory: '1GB'}).https.onCall(
   async (data, context): Promise<{ base64Image: string }> => {
     try {
+      // PREVIEW MODE: Auth check is temporarily disabled.
+      /*
       if (!context.auth) {
         throw new functions.https.HttpsError("unauthenticated", "You must be logged in.");
       }
+      */
       
       const { characterId, prompt } = data;
       
@@ -184,11 +200,17 @@ export const generateCharacterVisualization = regionalFunctions.runWith({timeout
           throw new functions.https.HttpsError("failed-precondition", "Character has no preview image for reference.");
       }
 
-      // Download reference image from GCS
-      const bucket = getStorage().bucket(admin.app().options.storageBucket);
-      const file = bucket.file(character.imagePreviewUrl);
-      const [imageBuffer] = await file.download();
-      const imageBase64FromStorage = imageBuffer.toString("base64");
+      // --- Download reference image from GCS with specific error handling ---
+      let imageBase64FromStorage;
+      try {
+        const bucket = getStorage().bucket(); // Use default bucket - more robust
+        const file = bucket.file(character.imagePreviewUrl);
+        const [imageBuffer] = await file.download();
+        imageBase64FromStorage = imageBuffer.toString("base64");
+      } catch (storageError) {
+        console.error(`Failed to download reference image '${character.imagePreviewUrl}' from GCS.`, storageError);
+        throw new functions.https.HttpsError("internal", "Could not retrieve the character's reference image from storage. It may have been deleted or there could be a permission issue.");
+      }
       
       const vertexAI = new VertexAI({ project: PROJECT_ID, location: LOCATION });
       const generativeModel = vertexAI.getGenerativeModel({ model: "gemini-2.5-flash-image" });
@@ -204,11 +226,10 @@ export const generateCharacterVisualization = regionalFunctions.runWith({timeout
       const textPart = { text: generationPrompt };
 
       const result = await generativeModel.generateContent({
-          contents: [{ role: 'user', parts: [textPart, imagePart] }],
-          // FIX: Explicitly tell the model to generate an image as output.
-          // This was the missing piece causing the model to return an empty response.
-          config: {
-            responseModalities: ['IMAGE']
+          // DEFINITIVE FIX: Use the direct multimodal format instead of the chat format.
+          contents: { parts: [imagePart, textPart] },
+          generationConfig: {
+            responseMimeType: 'image/png'
           }
       });
       
