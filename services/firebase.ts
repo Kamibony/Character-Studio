@@ -22,6 +22,7 @@ let storage: FirebaseStorage | undefined;
 let functions: Functions | undefined;
 let googleProvider: GoogleAuthProvider | undefined;
 let firebaseError: Error | null = null;
+export const projectId = firebaseConfig.projectId;
 
 try {
   if (firebaseConfig.apiKey === "YOUR_API_KEY" || !firebaseConfig.apiKey || firebaseConfig.apiKey.startsWith("AIzaSyARuwcn4hMmt7MD5tTTp_r2HVqSu8Zno20".substring(0,10))) {

@@ -1,12 +1,12 @@
-
 import React, { useState } from 'react';
 import { signInWithPopup } from 'firebase/auth';
-import { auth, googleProvider } from '../services/firebase';
+import { auth, googleProvider, projectId } from '../services/firebase';
 import { Zap, AlertTriangle } from 'lucide-react';
 
 const LoginPage: React.FC = () => {
   const [error, setError] = useState<{title: string, message: string} | null>(null);
   const [isSigningIn, setIsSigningIn] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   const handleGoogleSignIn = async () => {
     setIsSigningIn(true);
@@ -18,7 +18,7 @@ const LoginPage: React.FC = () => {
       if (err.code === 'auth/unauthorized-domain') {
         setError({
             title: 'Domain Not Authorized',
-            message: `This application's domain (${window.location.hostname}) needs to be authorized for sign-in within your Firebase project.`
+            message: `This application's domain needs to be authorized for sign-in. Please follow the steps below.`
         });
       } else if (err.code === 'auth/api-key-not-valid') {
         setError({
@@ -34,6 +34,13 @@ const LoginPage: React.FC = () => {
       console.error(err);
       setIsSigningIn(false);
     }
+  };
+
+  const handleCopyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text).then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+    });
   };
 
   return (
@@ -71,14 +78,42 @@ const LoginPage: React.FC = () => {
                       <h3 className="font-bold text-red-300">{error.title}</h3>
                       <p className="text-red-400 text-sm mt-1">{error.message}</p>
                       {error.title === 'Domain Not Authorized' && (
-                          <div className="mt-3 text-xs text-gray-300 bg-background/50 p-3 rounded-md border border-gray-600">
-                              <p className="font-semibold text-gray-200">How to fix this configuration issue:</p>
-                              <ol className="list-decimal list-inside pl-1 mt-1 space-y-1">
-                                  <li>Go to your project in the Firebase Console.</li>
-                                  <li>Navigate to <strong>Authentication</strong> &gt; <strong>Settings</strong> tab.</li>
-                                  <li>Under <strong>Authorized domains</strong>, click <strong>Add domain</strong>.</li>
-                                  <li>Enter the following domain: <code className="bg-gray-700 px-1.5 py-1 rounded text-white font-mono">{window.location.hostname}</code></li>
-                              </ol>
+                          <div className="mt-3 text-xs text-gray-300 bg-background/50 p-3 rounded-md border border-gray-600 space-y-3">
+                              <div>
+                                  <p className="font-semibold text-gray-200">How to Fix:</p>
+                                  <ol className="list-decimal list-inside pl-1 mt-1 space-y-1">
+                                      <li>
+                                          <a 
+                                            href={`https://console.firebase.google.com/project/${projectId}/authentication/settings`} 
+                                            target="_blank" 
+                                            rel="noopener noreferrer"
+                                            className="text-primary underline hover:text-primary/80"
+                                          >
+                                            Open your Firebase Auth settings
+                                          </a>.
+                                      </li>
+                                      <li>Under <strong>Authorized domains</strong>, click <strong>Add domain</strong>.</li>
+                                      <li>
+                                        <p>Enter this domain:</p>
+                                        <div className="flex items-center gap-2 mt-1">
+                                            <code className="bg-gray-700 px-1.5 py-1 rounded text-white font-mono flex-grow break-all">{window.location.hostname}</code>
+                                            <button
+                                                onClick={() => handleCopyToClipboard(window.location.hostname)}
+                                                className="bg-secondary hover:bg-secondary/80 text-white font-semibold px-3 py-1 rounded-md text-xs transition-all flex-shrink-0"
+                                            >
+                                                {copied ? 'Copied!' : 'Copy'}
+                                            </button>
+                                        </div>
+                                      </li>
+                                  </ol>
+                              </div>
+                              <div className="pt-3 border-t border-gray-600/50">
+                                <p className="font-semibold text-gray-200">Already added the domain?</p>
+                                <ul className="list-disc list-inside pl-1 mt-1 space-y-1">
+                                    <li>Please wait 1-2 minutes for the setting to take effect.</li>
+                                    <li>Try a hard refresh: <strong>Cmd+Shift+R</strong> (Mac) or <strong>Ctrl+Shift+R</strong> (Windows/Linux).</li>
+                                </ul>
+                              </div>
                           </div>
                       )}
                   </div>
