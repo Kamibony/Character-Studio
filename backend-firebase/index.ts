@@ -21,10 +21,9 @@ interface UserCharacter {
 admin.initializeApp();
 const db = admin.firestore();
 
-// Initialize Vertex AI (for Gemini/Imagen)
+// --- Configuration for Vertex AI ---
 const PROJECT_ID = "character-studio-comics";
 const LOCATION = "us-central1";
-const vertexAI = new VertexAI({ project: PROJECT_ID, location: LOCATION });
 
 const regionalFunctions = functions.region("us-central1");
 
@@ -89,6 +88,9 @@ export const startCharacterTuning = regionalFunctions.https.onCall(
 async function simulateTraining(characterId: string) {
   const charRef = db.collection("user_characters").doc(characterId);
   try {
+    // FIX: Lazy initialize VertexAI client inside the function
+    const vertexAI = new VertexAI({ project: PROJECT_ID, location: LOCATION });
+    
     // Step 3a: Change status to "training"
     await charRef.update({ status: "training" });
     
@@ -161,6 +163,9 @@ export const generateCharacterVisualization = regionalFunctions.runWith({timeout
         throw new functions.https.HttpsError("not-found", "Character not found.");
     }
     const character = charDoc.data() as UserCharacter;
+    
+    // FIX: Lazy initialize VertexAI client inside the function
+    const vertexAI = new VertexAI({ project: PROJECT_ID, location: LOCATION });
     
     // As per the prompt, we simulate image-to-image by using the character description
     // in the prompt, since we are not downloading the image from Storage for simplicity.
